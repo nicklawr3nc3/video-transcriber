@@ -3,4 +3,5 @@ Video transcriber that utilizes OpenAI Whisper & yt-dlp to download and transcri
 
 ## Usage
 `pip3 install -r requirements.txt`
+
 `python3 transcribe.py [video_link1], [video_link2]...`
