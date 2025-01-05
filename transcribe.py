@@ -6,15 +6,18 @@ from whisper.utils import get_writer
 import logging
 
 def transcribe(link):
-    downloaded_filename = downloader.prepare_filename(downloader.extract_info(link, download=False))
-    filename = downloaded_filename.split('.')[0]
-    if os.path.exists(f'output/{filename}'):
+    filepath = downloader.prepare_filename(downloader.extract_info(link, download=False))
+    filename = filepath.split('.')[0]
+    if os.path.exists(filepath):
         logging.warning(f'Output file already exists, skipping {link}')
         return
     downloader.download(link)
-    result = model.transcribe(downloaded_filename)
-    # Write to output directory
-    get_writer('txt', 'output')(result, f'{filename}.txt')
+    result = model.transcribe(filepath)
+    # Write to output directory. vtt includes timestamps of text
+    get_writer('vtt', 'output')(result, filepath)
+    # Include link to video in results
+    with open(f'{filename}.vtt', 'a') as f:
+        f.write(link)
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
