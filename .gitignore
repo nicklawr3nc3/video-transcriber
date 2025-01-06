@@ -1,2 +1,5 @@
 output/
 .python-version
+build/
+dist/
+*.spec
