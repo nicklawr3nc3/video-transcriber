@@ -26,6 +26,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="A simple argument parser")
     # Add arguments
     parser.add_argument("-f", '--format', help="Output file format")
+    parser.add_argument("-F", '--file', help="File to read from")
     parser.add_argument("-m", '--model', help="OpenAI Whisper model to use")
     parser.add_argument("additional_args", nargs='*', help="Additional arguments")
     # Parse the arguments
@@ -36,8 +37,11 @@ if __name__ == '__main__':
     else:
         model = whisper.load_model(args.model or "tiny.en")
         downloader = yt_dlp.YoutubeDL(params={'format': args.format or 'ba', 'outtmpl' : {'default': f"output/%(upload_date)s_%(title)s.mp3"}})
-        print(args)
-        for x in args.additional_args:
+        videos = args.additional_args
+        if args.file:
+           with open(args.file, 'r') as f:
+                videos = f.readlines() 
+        for x in videos:
             filepath = downloader.prepare_filename(downloader.extract_info(x, download=False))
             # Only transcribe for default format
             if download(x) and not args.format:
