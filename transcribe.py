@@ -5,6 +5,8 @@ import os
 from whisper.utils import get_writer
 import logging
 import argparse
+from dotenv import load_dotenv
+import requests
 
 def download(link):
     if os.path.exists(filepath):
@@ -27,6 +29,7 @@ if __name__ == '__main__':
     # Add arguments
     parser.add_argument("-f", '--format', help="Output file format")
     parser.add_argument("-F", '--file', help="File to read from")
+    parser.add_argument("-l", '--latest', help="Pull lirik's latest VOD", action='store_true')
     parser.add_argument("-m", '--model', help="OpenAI Whisper model to use. Options are: tiny.en, base.en, small.en, medium.en, large, turbo")
     parser.add_argument("additional_args", nargs='*', help="Additional arguments")
     # Parse the arguments
@@ -40,7 +43,11 @@ if __name__ == '__main__':
         videos = args.additional_args
         if args.file:
            with open(args.file, 'r') as f:
-                videos = f.readlines() 
+                videos = f.readlines()
+        if args.latest:
+            load_dotenv()
+            oauth = requests.post('https://id.twitch.tv/oauth2/token', f"client_id={os.getenv('client_id')}&client_secret={os.getenv('client_secret')}&grant_type=client_credentials", headers={'Content-Type': 'application/x-www-form-urlencoded'}).json()['access_token']
+            videos = [requests.get('https://api.twitch.tv/helix/videos', params={'user_id': '23161357', 'sort_by': 'time', 'type': 'archive', 'first': '1'}, headers={'Authorization' : f'Bearer {oauth}', 'Client-Id': os.getenv('client_id')}).json()['data'][0]['url']]
         for x in videos:
             filepath = downloader.prepare_filename(downloader.extract_info(x, download=False))
             # Only transcribe for default format
