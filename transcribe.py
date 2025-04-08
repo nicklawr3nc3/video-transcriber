@@ -31,6 +31,7 @@ if __name__ == '__main__':
     parser.add_argument("-F", '--file', help="File to read from")
     parser.add_argument("-l", '--latest', help="Pull lirik's latest VOD", action='store_true')
     parser.add_argument("-m", '--model', help="OpenAI Whisper model to use. Options are: tiny.en, base.en, small.en, medium.en, large, turbo")
+    parser.add_argument("-d", '--duration', type=int, help="Duration in seconds to download (default: download entire video)")
     parser.add_argument("additional_args", nargs='*', help="Additional arguments")
     # Parse the arguments
     args = parser.parse_args()
@@ -39,7 +40,16 @@ if __name__ == '__main__':
         print('Correct usage: python3 transcribe.py [ARGS] [video_link1], [video_link2], ...')
     else:
         model = whisper.load_model(args.model or "base.en")
-        downloader = yt_dlp.YoutubeDL(params={'format': args.format or 'ba', 'outtmpl' : {'default': f"output/%(upload_date)s_%(title)s.mp3"}})
+        yt_dlp_params = {
+            'format': args.format or 'ba', 
+            'outtmpl': {'default': f"output/%(upload_date)s_%(title)s.mp3"}
+        }
+        if args.duration:
+            yt_dlp_params.update({
+                'download_ranges': lambda info, ydl: [{'start_time': 0, 'end_time': args.duration}],
+                'force_keyframes_at_cuts': True
+            })
+        downloader = yt_dlp.YoutubeDL(params=yt_dlp_params)
         videos = args.additional_args
         if args.file:
            with open(args.file, 'r') as f:
