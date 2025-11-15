@@ -20,9 +20,13 @@ def transcribe(link):
     result = model.transcribe(filepath)
     # Write to output directory. vtt includes timestamps of text
     get_writer('vtt', 'output')(result, filepath)
+    # Write plain text version
+    get_writer('txt', 'output')(result, filepath)
     # Include link to video in results
     with open(f'{filename}.vtt', 'a') as f:
         f.write(link)
+    with open(f'{filename}.txt', 'a') as f:
+        f.write(f'\n\nVideo link: {link}')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="A simple argument parser")
