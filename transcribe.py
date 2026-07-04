@@ -6,9 +6,12 @@ import os
 import logging
 import argparse
 import subprocess
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 import numpy as np
 import requests
+
+LIRIK_USER_ID = '23161357'
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
@@ -57,11 +60,54 @@ def write_vtt_segment(f, segment, time_offset=0):
     f.write(f'{start} --> {end}\n')
     f.write(segment.text.strip() + '\n\n')
 
+def get_twitch_oauth():
+    load_dotenv()
+    client_id = os.getenv('client_id')
+    client_secret = os.getenv('client_secret')
+    response = requests.post(
+        'https://id.twitch.tv/oauth2/token',
+        f'client_id={client_id}&client_secret={client_secret}&grant_type=client_credentials',
+        headers={'Content-Type': 'application/x-www-form-urlencoded'},
+    ).json()
+    return response['access_token'], client_id
+
+def is_streamer_live(oauth, client_id, user_id=LIRIK_USER_ID):
+    response = requests.get(
+        'https://api.twitch.tv/helix/streams',
+        params={'user_id': user_id},
+        headers={'Authorization': f'Bearer {oauth}', 'Client-Id': client_id},
+    ).json()
+    return bool(response.get('data'))
+
+def is_today_utc(date_str):
+    if not date_str:
+        return False
+    today = datetime.now(timezone.utc).date()
+    if len(date_str) >= 10 and date_str[4] == '-':
+        created = datetime.fromisoformat(date_str[:10]).date()
+    else:
+        created = datetime.strptime(date_str[:8], '%Y%m%d').date()
+    return created == today
+
+def cleanup_partial_download(path):
+    for suffix in ('', '.part', '.ytdl'):
+        partial = f'{path}{suffix}' if suffix else path
+        if os.path.exists(partial):
+            os.remove(partial)
+
 def download(link):
     if os.path.exists(filepath):
         logging.info(f'Audio file already exists, skipping download: {filepath}')
         return
-    downloader.download(link)
+    try:
+        downloader.download(link)
+    except yt_dlp.utils.DownloadError as e:
+        if 'Initialization fragment found after media fragments' not in str(e):
+            raise
+        logging.warning('HLS init fragment error; retrying with ffmpeg downloader')
+        cleanup_partial_download(filepath)
+        ffmpeg_params = {**yt_dlp_params, 'downloader': 'ffmpeg'}
+        yt_dlp.YoutubeDL(ffmpeg_params).download([link])
 
 def transcribe(link, chunk_length=1800):
     filename = os.path.splitext(filepath)[0]
@@ -125,8 +171,8 @@ if __name__ == '__main__':
             logging.info(f'Using CPU for Whisper inference (compute_type={compute_type})')
         model = WhisperModel(args.model or 'small.en', device=device, compute_type=compute_type)
         yt_dlp_params = {
-            'format': args.format or 'ba', 
-            'outtmpl': {'default': f"output/%(upload_date)s_%(title)s.mp3"}
+            'format': args.format or 'ba',
+            'outtmpl': {'default': f"output/%(upload_date)s_%(title)s.mp3"},
         }
         # Set download ranges
         if args.duration:
@@ -139,14 +185,28 @@ if __name__ == '__main__':
         if args.file:
            with open(args.file, 'r') as f:
                 videos = f.readlines()
+        stream_is_live = False
         if args.latest is not None:
-            load_dotenv()
-            oauth = requests.post('https://id.twitch.tv/oauth2/token', f"client_id={os.getenv('client_id')}&client_secret={os.getenv('client_secret')}&grant_type=client_credentials", headers={'Content-Type': 'application/x-www-form-urlencoded'}).json()['access_token']
+            oauth, client_id = get_twitch_oauth()
+            stream_is_live = is_streamer_live(oauth, client_id)
             count = args.latest if args.latest > 0 else 10
-            response = requests.get('https://api.twitch.tv/helix/videos', params={'user_id': '23161357', 'sort_by': 'time', 'type': 'archive', 'first': str(count)}, headers={'Authorization' : f'Bearer {oauth}', 'Client-Id': os.getenv('client_id')}).json()
-            videos = [video['url'] for video in response['data']]
+            response = requests.get(
+                'https://api.twitch.tv/helix/videos',
+                params={'user_id': LIRIK_USER_ID, 'sort_by': 'time', 'type': 'archive', 'first': str(count)},
+                headers={'Authorization': f'Bearer {oauth}', 'Client-Id': client_id},
+            ).json()
+            videos = []
+            for video in response['data']:
+                if stream_is_live and is_today_utc(video['created_at']):
+                    logging.info("Skipping today's VOD (stream still live): %s", video['title'])
+                    continue
+                videos.append(video['url'])
         for x in videos:
-            filepath = downloader.prepare_filename(downloader.extract_info(x, download=False))
+            info = downloader.extract_info(x, download=False)
+            filepath = downloader.prepare_filename(info)
+            if stream_is_live and is_today_utc(info.get('upload_date', '')):
+                logging.info("Skipping today's VOD (stream still live): %s", info.get('title', x))
+                continue
             # Only transcribe for default format
             download(x)
             if not args.format:
