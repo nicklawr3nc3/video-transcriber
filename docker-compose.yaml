@@ -1,0 +1,28 @@
+name: video-transcriber
+
+networks:
+  mediastack:
+    name: mediastack
+    external: true
+
+services:
+  web:
+    image: nginx:alpine
+    container_name: web
+    restart: unless-stopped
+    volumes:
+      - ./output:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - mediastack
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=mediastack
+      # ROUTERS
+      - traefik.http.routers.web.service=web
+      - traefik.http.routers.web.rule=Host(`web.${CLOUDFLARE_DNS_ZONE:-jellyjake.com}`)
+      - traefik.http.routers.web.entrypoints=secureweb
+      - traefik.http.routers.web.middlewares=security-headers@file,traefik-bouncer@file
+      # SERVICES
+      - traefik.http.services.web.loadbalancer.server.scheme=http
+      - traefik.http.services.web.loadbalancer.server.port=80
