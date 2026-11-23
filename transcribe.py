@@ -95,6 +95,13 @@ def cleanup_partial_download(path):
         if os.path.exists(partial):
             os.remove(partial)
 
+def transcript_paths():
+    filename = os.path.splitext(filepath)[0]
+    return f'{filename}.vtt', f'{filename}.txt'
+
+def has_transcript():
+    return all(os.path.exists(p) for p in transcript_paths())
+
 def download(link):
     if os.path.exists(filepath):
         logging.info(f'Audio file already exists, skipping download: {filepath}')
@@ -110,15 +117,19 @@ def download(link):
         yt_dlp.YoutubeDL(ffmpeg_params).download([link])
 
 def transcribe(link, chunk_length=1800):
-    filename = os.path.splitext(filepath)[0]
-    vtt_path = f'{filename}.vtt'
-    txt_path = f'{filename}.txt'
-    if os.path.exists(vtt_path) and os.path.exists(txt_path):
+    vtt_path, txt_path = transcript_paths()
+    if has_transcript():
         logging.info(f'Transcription already exists, skipping: {vtt_path}')
         return
 
     duration = get_audio_duration(filepath)
-    transcribe_opts = {'beam_size': 1, 'condition_on_previous_text': False}
+    transcribe_opts = {
+        'beam_size': 1,
+        'condition_on_previous_text': False,
+        'language': 'en',
+        # Skip silence / music-only stretches: faster, and fewer hallucinated lines
+        'vad_filter': True,
+    }
     txt_parts = []
     chunk_start = 0.0
 
@@ -152,7 +163,7 @@ if __name__ == '__main__':
     parser.add_argument("-f", '--format', help="Output file format")
     parser.add_argument("-F", '--file', help="File to read from")
     parser.add_argument("-l", '--latest', type=int, help="Pull lirik's latest N VODs (default: 10)", nargs='?', const=10, default=None)
-    parser.add_argument("-m", '--model', help="Whisper model to use. Options are: tiny.en, base.en, small.en, medium.en, large-v3, turbo")
+    parser.add_argument("-m", '--model', help="Whisper model to use (default: turbo). Options include: small.en, medium.en, distil-large-v3.5, large-v3, turbo")
     parser.add_argument("-D", '--device', default='auto', choices=['auto', 'cuda', 'cpu'], help="Device for Whisper inference (default: auto)")
     parser.add_argument("-d", '--duration', type=int, help="Duration in seconds to download (default: download entire video)")
     parser.add_argument("-c", '--chunk-length', type=int, default=1800, help="Transcribe audio in chunks of N seconds to limit memory use (default: 1800)")
@@ -169,10 +180,12 @@ if __name__ == '__main__':
             logging.info(f'Using GPU ({ctranslate2.get_cuda_device_count()} CUDA device(s), compute_type={compute_type})')
         else:
             logging.info(f'Using CPU for Whisper inference (compute_type={compute_type})')
-        model = WhisperModel(args.model or 'small.en', device=device, compute_type=compute_type)
+        model = WhisperModel(args.model or 'turbo', device=device, compute_type=compute_type)
         yt_dlp_params = {
-            'format': args.format or 'ba',
-            'outtmpl': {'default': f"output/%(upload_date)s_%(title)s.mp3"},
+            # 'bestaudio' only matches audio-only streams (vcodec=none); it errors rather than fall back to video
+            'format': args.format or 'bestaudio',
+            # Twitch audio-only is AAC in an MP4 container; .m4a is accurate (it is not MP3)
+            'outtmpl': {'default': "output/%(upload_date)s_%(title)s.m4a"},
         }
         # Set download ranges
         if args.duration:
@@ -206,6 +219,9 @@ if __name__ == '__main__':
             filepath = downloader.prepare_filename(info)
             if stream_is_live and is_today_utc(info.get('upload_date', '')):
                 logging.info("Skipping today's VOD (stream still live): %s", info.get('title', x))
+                continue
+            if not args.format and has_transcript():
+                logging.info(f'Transcription already exists, skipping: {filepath}')
                 continue
             # Only transcribe for default format
             download(x)
